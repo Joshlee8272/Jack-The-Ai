@@ -216,11 +216,3 @@ if __name__ == "__main__":
     bot.remove_webhook()
     bot.set_webhook(url="https://jack-the-ai.onrender.com/" + TOKEN)
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
-                except:
-                    pass
-                return
-
-if __name__ == "__main__":
-    bot.remove_webhook()
-    bot.set_webhook(url="https://jack-the-ai.onrender.com/" + TOKEN)
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
