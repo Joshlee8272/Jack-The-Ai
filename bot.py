@@ -1,19 +1,20 @@
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from gtts import gTTS
-import tempfile, re
+import tempfile, re, time
 from flask import Flask, request
 import os
 
-TOKEN = "8369185267:AAGV7CPcWM0UBR7xiEGIpz4btLr4QGlmXyU"  # ⚠️ Your token added
+# ✅ Your bot token
+TOKEN = "8369185267:AAGV7CPcWM0UBR7xiEGIpz4btLr4QGlmXyU"
 bot = telebot.TeleBot(TOKEN, threaded=True, num_threads=10)
 app = Flask(__name__)
 
-ban_words = {}
-warnings = {}
-admin_cache = {}
+ban_words = {}  # Stores banned words per chat
+warnings = {}   # Stores warning count per user
 
 def is_admin(chat_id, user_id):
+    """Check if user is an admin in the chat"""
     try:
         admins = bot.get_chat_administrators(chat_id)
         return any(a.user.id == user_id for a in admins)
@@ -33,6 +34,7 @@ def webhook():
 def index():
     return "Bot is running!", 200
 
+# ✅ Start command with buttons
 @bot.message_handler(commands=["start"])
 def start(message):
     markup = InlineKeyboardMarkup()
@@ -40,6 +42,7 @@ def start(message):
     markup.add(InlineKeyboardButton("⚙ Customize Channel", callback_data="customize_channel"))
     bot.send_message(message.chat.id, "Welcome! Choose an option:", reply_markup=markup)
 
+# ✅ Handle button clicks
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
     if call.data == "text_to_voice":
@@ -48,28 +51,51 @@ def callback_handler(call):
     elif call.data == "customize_channel":
         bot.send_message(call.message.chat.id, "Please add me to your discussion group as admin.")
 
+# ✅ Convert text to voice
 def convert_text_to_voice(message):
     try:
+        if not message.text:
+            bot.reply_to(message, "❌ Please send text only.")
+            return
         tts = gTTS(text=message.text, lang="en")
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
             tts.save(tmp.name)
             bot.send_voice(message.chat.id, open(tmp.name, "rb"))
     except Exception as e:
-        bot.reply_to(message, f"Error: {e}")
+        bot.reply_to(message, f"⚠ Error: {e}")
 
+# ✅ Warning system for ban words
 def warn_user(chat_id, user_id, username):
     key = f"{chat_id}:{user_id}"
     warnings[key] = warnings.get(key, 0) + 1
     count = warnings[key]
 
-    penalties = {1: 60, 2: 3600, 3: 86400}
+    penalties = {1: 60, 2: 3600, 3: 86400}  # mute times
     if count <= 3:
-        bot.restrict_chat_member(chat_id, user_id, until_date=int(message.date.timestamp()) + penalties[count])
-        bot.send_message(chat_id, f"⚠ Warning {count}/4 for {username}. Muted {penalties[count]}s.")
+        duration = penalties[count]
+        try:
+            bot.restrict_chat_member(chat_id, user_id, until_date=int(time.time()) + duration)
+            bot.send_message(chat_id, f"⚠ Warning {count}/4 for {username}. Muted for {duration}s.")
+        except:
+            bot.send_message(chat_id, f"⚠ Warning {count}/4 for {username}.")
     else:
-        bot.kick_chat_member(chat_id, user_id)
-        bot.send_message(chat_id, f"🚫 {username} has been kicked for repeated ban words.")
+        try:
+            bot.kick_chat_member(chat_id, user_id)
+            bot.send_message(chat_id, f"🚫 {username} has been kicked for repeated ban words.")
+        except:
+            bot.send_message(chat_id, f"⚠ Could not kick {username}.")
 
+# ✅ Command to set ban words
+@bot.message_handler(commands=["banwords"])
+def set_ban_words(message):
+    if not is_admin(message.chat.id, message.from_user.id):
+        bot.reply_to(message, "❌ Only admins can set ban words.")
+        return
+    words = message.text.replace("/banwords", "").strip().split(",")
+    ban_words[message.chat.id] = [w.strip().lower() for w in words if w.strip()]
+    bot.reply_to(message, f"✅ Ban words set: {', '.join(ban_words[message.chat.id])}")
+
+# ✅ Check messages for ban words
 @bot.message_handler(func=lambda m: True)
 def check_ban_words(message):
     if message.chat.id in ban_words:
@@ -84,5 +110,5 @@ def check_ban_words(message):
 
 if __name__ == "__main__":
     bot.remove_webhook()
-    bot.set_webhook(url="https://YOUR_RENDER_APP_URL/" + TOKEN)
+    bot.set_webhook(url="https://jack-the-ai.onrender.com/" + TOKEN)
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
