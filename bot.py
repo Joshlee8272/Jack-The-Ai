@@ -71,7 +71,6 @@ def is_member_channel(user_id):
     if not chan:
         return True  # no requirement set
     try:
-        # telebot allows passing username like "@channel"
         member = bot.get_chat_member(chan, user_id)
         return member.status in ("member", "creator", "administrator", "restricted")
     except Exception:
@@ -93,6 +92,12 @@ def send_join_prompt(chat_id):
         parse_mode="Markdown",
     )
 
+def needs_join_check(chat):
+    """Return True only when we should enforce the join-check:
+       - Only in private chats (not groups/channels/discussions).
+    """
+    return getattr(chat, "type", None) == "private"
+
 # ---------------- Flask webhook ----------------
 @app.route("/" + TOKEN, methods=["POST"])
 def webhook():
@@ -108,11 +113,12 @@ def index():
 # ====================== START / HELP ===========================
 @bot.message_handler(commands=["start"])
 def start(message):
-    # check required channel membership for private chats and commands
-    user_id = getattr(message.from_user, "id", None)
-    if user_id and not is_member_channel(user_id):
-        send_join_prompt(message.chat.id)
-        return
+    # only enforce required-channel membership for private chats
+    if needs_join_check(message.chat):
+        user_id = getattr(message.from_user, "id", None)
+        if user_id and not is_member_channel(user_id):
+            send_join_prompt(message.chat.id)
+            return
 
     # record user/group
     if message.chat.type == "private" and message.from_user.id not in data["users"]:
@@ -141,10 +147,10 @@ def show_help_callback(call):
 
 @bot.message_handler(commands=["help"])
 def help_cmd(message):
-    # require channel membership before showing help
-    if message.from_user and not is_member_channel(message.from_user.id):
-        send_join_prompt(message.chat.id)
-        return
+    if needs_join_check(message.chat):
+        if message.from_user and not is_member_channel(message.from_user.id):
+            send_join_prompt(message.chat.id)
+            return
     send_help(message.chat.id)
 
 def send_help(chat_id):
@@ -178,6 +184,14 @@ def send_help(chat_id):
 # -------------------- Callbacks for join check --------------------
 @bot.callback_query_handler(func=lambda c: c.data == "check_join")
 def check_join_callback(call):
+    # Only relevant in private chats — ignore / don't prompt in groups
+    if not needs_join_check(call.message.chat):
+        try:
+            bot.answer_callback_query(call.id, "This check is only for private chats.", show_alert=True)
+        except Exception:
+            pass
+        return
+
     user_id = call.from_user.id
     if is_member_channel(user_id):
         try:
@@ -196,8 +210,8 @@ def check_join_callback(call):
 # ====================== TEXT TO VOICE ===========================
 @bot.callback_query_handler(func=lambda c: c.data == "text_to_voice")
 def callback_handler(call):
-    # check membership again for safety
-    if not is_member_channel(call.from_user.id):
+    # only require join for private chats
+    if needs_join_check(call.message.chat) and not is_member_channel(call.from_user.id):
         send_join_prompt(call.message.chat.id)
         return
 
@@ -213,6 +227,10 @@ def callback_handler(call):
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("lang_"))
 def select_language(call):
+    # only require join for private chats
+    if needs_join_check(call.message.chat) and not is_member_channel(call.from_user.id):
+        send_join_prompt(call.message.chat.id)
+        return
     lang = call.data.split("_", 1)[1]
     msg = bot.send_message(call.message.chat.id, "✏ Send me text:")
     bot.register_next_step_handler(msg, lambda m: translate_and_convert(m, lang))
@@ -230,10 +248,9 @@ def translate_and_convert(message, lang):
             tts.save(tmp)
         with open(tmp, "rb") as f:
             bot.send_voice(message.chat.id, f)
-    except Exception as e:
+    except Exception:
         bot.send_message(message.chat.id, "❌ Failed to generate/send voice.")
     finally:
-        # cleanup temp file
         if tmp and os.path.exists(tmp):
             try:
                 os.remove(tmp)
@@ -244,7 +261,7 @@ def translate_and_convert(message, lang):
 # ====================== INFO COMMANDS ===========================
 @bot.message_handler(commands=["botstats"])
 def botstats_cmd(message):
-    if message.from_user and not is_member_channel(message.from_user.id):
+    if needs_join_check(message.chat) and message.from_user and not is_member_channel(message.from_user.id):
         send_join_prompt(message.chat.id)
         return
     uptime = int(time.time() - START_TIME)
@@ -258,7 +275,7 @@ def botstats_cmd(message):
 
 @bot.message_handler(commands=["ping"])
 def ping_cmd(message):
-    if message.from_user and not is_member_channel(message.from_user.id):
+    if needs_join_check(message.chat) and message.from_user and not is_member_channel(message.from_user.id):
         send_join_prompt(message.chat.id)
         return
     start = time.time()
@@ -267,7 +284,7 @@ def ping_cmd(message):
 
 @bot.message_handler(commands=["userinfo"])
 def userinfo_cmd(message):
-    if message.from_user and not is_member_channel(message.from_user.id):
+    if needs_join_check(message.chat) and message.from_user and not is_member_channel(message.from_user.id):
         send_join_prompt(message.chat.id)
         return
     u = message.from_user
@@ -280,7 +297,7 @@ def userinfo_cmd(message):
 # ====================== FEEDBACK / REPORT ===========================
 @bot.message_handler(commands=["feedback"])
 def feedback_cmd(message):
-    if message.from_user and not is_member_channel(message.from_user.id):
+    if needs_join_check(message.chat) and message.from_user and not is_member_channel(message.from_user.id):
         send_join_prompt(message.chat.id)
         return
     msg = message.text.replace("/feedback", "").strip()
@@ -290,7 +307,7 @@ def feedback_cmd(message):
 
 @bot.message_handler(commands=["report"])
 def report_cmd(message):
-    if message.from_user and not is_member_channel(message.from_user.id):
+    if needs_join_check(message.chat) and message.from_user and not is_member_channel(message.from_user.id):
         send_join_prompt(message.chat.id)
         return
     msg = message.text.replace("/report", "").strip()
